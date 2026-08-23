@@ -40,9 +40,12 @@ string CSV_Bool(bool b) { return(b ? "1" : "0"); }
 // DayNet_R_MarketEntry: فرضیه‌ی جایگزین (ورود بلافاصله در کلوزِ شکست، نه لیمیتِ منتظرِ ریتست) —
 // برایِ قدمِ ۲ (تطبیق با Reward_R برگه‌ی چشمی)، چون معلوم نیست مدلِ دقیقِ ورودی که محمود در پاسِ
 // چشمی استفاده کرده کدام‌یک از این دو بوده (نگاه کن به docs/NY_FrozenDefinitions.md، بخشِ «سؤالِ باز»).
+// DayNet_R_Potential (v1.5): سقفِ MFE-based روزِ ترید — «تا کجا می‌شد رسید» (mfeBoxes/۰.۷۵ برایِ
+// روزهایِ نه‌استاپ-نه‌TP)، برایِ سنجش با ستونِ Reward_R برگه‌ی چشمی. DayNet_R خودش (ستونِ رسمی)
+// نتیجه‌ی واقعیِ کلوزِ EOD را می‌سنجد؛ این دو مفهومِ مجزا هستند — نگاه کن به NY_FrozenDefinitions.md.
 const string NY_CSV_HEADER =
    "Date,Window,BoxHigh,BoxLow,BoxSize,BreakDir,BreakTime,BreakDist,LateBreakTime,"
-   "RetestWithin60,FillTime,MFE_Boxes,MAE_Boxes,EOD_Boxes,DayNet_R,DayNet_R_MarketEntry,"
+   "RetestWithin60,FillTime,MFE_Boxes,MAE_Boxes,EOD_Boxes,DayNet_R,DayNet_R_Potential,DayNet_R_MarketEntry,"
    "Rev_Triggered,Rev_MFE,Rev_ExitR,Rev_Outcome,Bias_Daily,EMA_Slope,NewsDay,BoxStart_Server,BoxEnd_Server";
 
 #endif // NY_CSVWRITER_MQH

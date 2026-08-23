@@ -127,7 +127,10 @@ struct SNYTradeOutcome
    bool     stopHit;
    bool     tpHit;
    datetime exitTime;      // ۰ اگر تا EOD نه استاپ نه TP خورد
-   double   exitR;         // -1 اگر استاپ، TP_Boxes/۰.۷۵ اگر TP، وگرنه mfeBoxes/۰.۷۵ (v1.4؛ همیشه >=۰)
+   double   exitR;         // DayNet_R واقعی: -1 اگر استاپ، TP_Boxes/۰.۷۵ اگر TP، وگرنه eodBoxesSigned/۰.۷۵
+                            // (v1.5 — نتیجه‌ی واقعیِ معامله در لحظه‌ی کلوزِ EOD؛ نگاه کن به پایینِ حلقه)
+   double   potentialR;    // v1.5: -1 اگر استاپ، TP_Boxes/۰.۷۵ اگر TP، وگرنه mfeBoxes/۰.۷۵ — «تا کجا
+                            // می‌شد رسید» (سقفِ MFE)، نه نتیجه‌ی واقعی؛ ستونِ تشخیصیِ جداگانه در CSV
    double   eodBoxesSigned; // فاصله‌ی کلوزِ EOD از لبه، واحدِ باکس، علامت‌دار (مثبت=جهتِ موافق)
 };
 
@@ -136,7 +139,7 @@ void NY_ResetOutcome(SNYTradeOutcome &o)
    o.hasData = false;
    o.mfeBoxes = 0; o.maeBoxes = 0;
    o.stopHit = false; o.tpHit = false;
-   o.exitTime = 0; o.exitR = 0; o.eodBoxesSigned = 0;
+   o.exitTime = 0; o.exitR = 0; o.potentialR = 0; o.eodBoxesSigned = 0;
 }
 
 void NY_ComputeTradeOutcome(const MqlRates &rates[], int count, int entryIdx, double edge, int dir,
@@ -170,7 +173,7 @@ void NY_ComputeTradeOutcome(const MqlRates &rates[], int count, int entryIdx, do
             // (شاید برایِ سنجشِ رانرها)، ولی بعدِ استاپ (ضرر) دیگر دنبال نمی‌کرده. پس: استاپ = توقفِ
             // کاملِ ردیابی (break)؛ TP فقط exitR/tpHit را قفل می‌کند، ردیابیِ MFE/MAE تا EOD ادامه دارد.
             out.stopHit = true; out.exitTime = rates[i].time;
-            out.exitR = -1.0;
+            out.exitR = -1.0; out.potentialR = -1.0;
             exitDetermined = true;
             break;
          }
@@ -178,6 +181,7 @@ void NY_ComputeTradeOutcome(const MqlRates &rates[], int count, int entryIdx, do
          {
             out.tpHit = true; out.exitTime = rates[i].time;
             out.exitR = NY_TP_BOXES / NY_STOP_DEPTH_PCT;
+            out.potentialR = out.exitR;
             exitDetermined = true;
          }
       }
@@ -187,16 +191,20 @@ void NY_ComputeTradeOutcome(const MqlRates &rates[], int count, int entryIdx, do
    double eodSigned = (dir > 0) ? (eodClose - edge) : (edge - eodClose);
    out.eodBoxesSigned = eodSigned / boxSize;
 
-   // v1.4 (ریشه‌یابیِ اعتبارسنجیِ هم‌فیدِ XChief — دستورِ مدیرِ پروژه): روزهایی که نه استاپ نه TP
-   // کامل خوردند، exitR را از EOD_Boxes می‌ساختیم؛ اما دیتایِ XChief (که اختلافِ بروکر را از معادله
-   // حذف کرد) نشان داد این فرمول اشتباه است — Reward_R برگه‌ی چشمی برایِ این روزها دقیقاً
-   // MFE_Boxes/۰.۷۵ است (بیشینه‌ی حرکتِ موافقِ همان روز، نه قیمتِ کلوزِ EOD). تأییدِ آماری: با فرمولِ
-   // EOD تطابق ۱۶٪ بود، با MFE به ۸۱٪ رسید (n=۶۳ روزِ «نه‌استاپ-نه‌TP‌کامل» رویِ هر سه پنجره). دلیلِ
-   // منطقی: محمود در پاسِ چشمی «تا کجا رفت» را ثبت می‌کرده، نه «کجا بست» — چون MAE هم (تصمیمِ ۵)
-   // فقط تا استاپ ردیابی می‌شود، بدونِ اینکه رسیدن به TP آن را freeze کند، mfeBoxes همیشه <TP_BOXES
-   // است اینجا (وگرنه tpHit بالا true می‌شد) — پس نیازی به cap نیست.
+   // v1.5 (تصحیحِ v1.4 — بعدِ کشفِ ستونِ سیزدهمِ برگه‌ی چشمی، «final result at: 23:50»، که تا این
+   // نسخه اصلاً استخراج نشده بود): v1.4 برایِ روزهایِ «نه استاپ نه TP کامل» فرمولِ exitR را از
+   // EOD_Boxes به mfeBoxes/۰.۷۵ عوض کرد چون آن‌موقع فقط با ستونِ Reward_R می‌سنجیدیم و Reward_R
+   // (بررسیِ دقیق‌تر نشان داد) خودش «بیشینه‌ی حرکتِ همان روز» است (mfeBoxes/۰.۷۵)، نه نتیجه‌ی واقعیِ
+   // معامله. ستونِ سیزدهم («final result at: 23:50») فقط برایِ همین روزها پر شده (۷۶ از ۷۶ چنین
+   // روزی، صفر برایِ روزهایِ استاپ/TP) و دقیقاً EOD_Boxes است (فرمولِ اصلیِ v1.1-v1.3) — تأییدِ
+   // آماری: تطابق ۸۲.۷٪ (n=۸۱، هر سه پنجره)، بالایِ هدفِ ۸۰٪ٍ مدیرِ پروژه. پس exitR به فرمولِ
+   // EOD-based برمی‌گردد (نتیجه‌ی واقعیِ معامله)؛ mfeBoxes/۰.۷۵ («سقفِ ممکن») حالا در potentialR
+   // جداگانه ذخیره می‌شود — ستونِ تشخیصیِ CSV که باید با Reward_R سنجیده شود، نه با DayNet_R.
    if(!exitDetermined)
-      out.exitR = out.mfeBoxes / NY_STOP_DEPTH_PCT;
+   {
+      out.exitR = eodSigned / (NY_STOP_DEPTH_PCT * boxSize);
+      out.potentialR = out.mfeBoxes / NY_STOP_DEPTH_PCT;
+   }
 }
 
 //------------------------------------------------------------------

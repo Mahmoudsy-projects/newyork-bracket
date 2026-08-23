@@ -10,10 +10,11 @@
 
 خروجی: NY_GroundTruth_Match_Report_<window>.md در همان پوشه‌ی CSVِ ورودی.
 
-نکته: این اسکریپت هر دو فرضیه‌ی DayNet_R (لیمیتِ گیت‌شده طبقِ متنِ سند) و DayNet_R_MarketEntry
-(ورودِ بلافاصله) را با ستونِ Reward_R برگه‌ی چشمی می‌سنجد — نگاه کن به
-docs/NY_FrozenDefinitions.md، بخشِ «سؤالِ باز» — تا معلوم شود پاسِ چشمیِ محمود کدام مدلِ ورودی را
-فرض کرده بوده، بدونِ حدسِ کورکورانه.
+نکته (v1.5): ground truth دو ستونِ مجزا دارد — Reward_R (سقفِ MFE-based) و EODResult_Boxes (نتیجه‌ی
+واقعیِ کلوزِ EOD، فقط برایِ روزهایِ نه‌استاپ-نه‌TP پر شده). DayNet_R رسمی با یک ground truthِ ترکیبی
+(Reward_R برایِ استاپ/TP + EODResult_Boxes/۰.۷۵ برایِ بقیه) سنجیده می‌شود؛ ستونِ تشخیصیِ
+DayNet_R_Potential (سقفِ MFE) جدا با Reward_R سنجیده می‌شود. نگاه کن به
+docs/NY_FrozenDefinitions.md، تصمیمِ پیاده‌سازیِ ۶.
 """
 import sys
 import os
@@ -109,22 +110,46 @@ def compare(window, generated_path):
             mism = sub.loc[~within, ["Date", gtc, genc]]
             lines.append("\nموارد نامنطبق:\n\n```\n" + mism.to_string(index=False) + "\n```\n")
 
-    # --- ۳) DayNet_R vs Reward_R — دو فرضیه (نگاه کن به «سؤالِ باز» در NY_FrozenDefinitions.md) ---
-    lines.append("\n## DayNet_R در برابرِ Reward_R — کدام مدلِ ورودی با پاسِ چشمی هم‌خوان است؟\n")
-    for col, title in [("DayNet_R", "لیمیتِ گیت‌شده (طبقِ متنِ سند)"),
-                        ("DayNet_R_MarketEntry", "ورودِ بلافاصله در کلوزِ شکست (فرضیه‌ی جایگزین)")]:
-        sub = tradable.dropna(subset=["Reward_R", col])
-        if sub.empty:
+    # --- ۳) DayNet_R (نتیجه‌ی واقعیِ معامله) در برابرِ ground truthِ واقعی ---
+    # v1.5: ground truth دو ستونِ مجزا دارد — Reward_R (سقفِ MFE-based: -1 اگر استاپ، 2.667 اگر TP،
+    # وگرنه MFE_Boxes/0.75) و EODResult_Boxes (فقط برایِ روزهایِ نه‌استاپ-نه‌TP پر شده — نتیجه‌ی
+    # واقعیِ کلوزِ EOD، در واحدِ باکس نه R). DayNet_R رسمی باید نتیجه‌ی واقعی را بسنجد: برایِ
+    # روزهایِ استاپ/TP این دقیقاً همان Reward_R است؛ برایِ بقیه باید EODResult_Boxes/۰.۷۵ باشد.
+    gt_real_R = tradable["Reward_R"].astype(float).copy()
+    has_eod_result = tradable["EODResult_Boxes"].notna()
+    gt_real_R.loc[has_eod_result] = tradable.loc[has_eod_result, "EODResult_Boxes"].astype(float) / 0.75
+
+    lines.append("\n## DayNet_R (نتیجه‌ی واقعی) در برابرِ ground truthِ ترکیبی\n\n"
+                 "(Reward_R برایِ روزهایِ استاپ/TP + EODResult_Boxes/۰.۷۵ برایِ بقیه — نگاه کن به "
+                 "NY_FrozenDefinitions.md، تصمیمِ پیاده‌سازیِ ۶.)\n")
+    for col, title in [("DayNet_R", "لیمیتِ گیت‌شده (ستونِ رسمی)"),
+                        ("DayNet_R_MarketEntry", "ورودِ بلافاصله در کلوزِ شکست (تشخیصی)")]:
+        if col not in tradable.columns:
+            continue
+        sub_gen = tradable[col].astype(float)
+        mask = gt_real_R.notna() & sub_gen.notna()
+        if mask.sum() == 0:
             lines.append(f"\n**{title}** ({col}): هیچ ردیفِ قابلِ مقایسه‌ای نبود.\n")
             continue
-        diff = (sub[col].astype(float) - sub["Reward_R"].astype(float)).abs()
+        diff = (sub_gen[mask] - gt_real_R[mask]).abs()
         within = (diff <= TOL_R)
-        lines.append(f"\n**{title}** (`{col}`): درونِ تلورانسِ ±{TOL_R}R: {within.sum()}/{len(sub)} "
+        lines.append(f"\n**{title}** (`{col}`): درونِ تلورانسِ ±{TOL_R}R: {within.sum()}/{mask.sum()} "
                      f"({100.0 * within.mean():.1f}%)، میانگینِ قدرمطلقِ اختلاف: {diff.mean():.3f}R\n")
+        if not within.all():
+            mism = tradable.loc[mask & ~within, ["Date"]].copy()
+            mism[col] = sub_gen[mask & ~within]
+            mism["gt_real_R"] = gt_real_R[mask & ~within]
+            lines.append("\nموارد نامنطبق:\n\n```\n" + mism.to_string(index=False) + "\n```\n")
 
-    lines.append("\n> اگر یکی از این دو نرخِ تطابق به‌وضوح بالاتر بود (مثلاً >۸۰٪ در برابرِ <۵۰٪)، "
-                 "همان مدلِ ورودی است که محمود در پاسِ چشمی استفاده کرده — نتیجه را به او گزارش بده "
-                 "تا تعریفِ نهاییِ `DayNet_R` تثبیت شود.\n")
+    # --- ۴) DayNet_R_Potential (سقفِ MFE) در برابرِ Reward_R — سنجشِ ستونِ تشخیصیِ جداگانه ---
+    if "DayNet_R_Potential" in tradable.columns:
+        sub = tradable.dropna(subset=["Reward_R", "DayNet_R_Potential"])
+        if not sub.empty:
+            diff = (sub["DayNet_R_Potential"].astype(float) - sub["Reward_R"].astype(float)).abs()
+            within = (diff <= TOL_R)
+            lines.append(f"\n## DayNet_R_Potential در برابرِ Reward_R (سقفِ MFE — تشخیصی، نه ستونِ رسمی)\n\n"
+                         f"درونِ تلورانسِ ±{TOL_R}R: {within.sum()}/{len(sub)} "
+                         f"({100.0 * within.mean():.1f}%)، میانگینِ قدرمطلقِ اختلاف: {diff.mean():.3f}R\n")
 
     _write(window, generated_path, lines)
 

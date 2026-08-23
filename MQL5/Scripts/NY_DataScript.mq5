@@ -176,7 +176,7 @@ bool ProcessOneDay(int handle, string symbol, int daysAgo,
          "None" + "," + "" + "," + "" + "," +
          (brk.found ? CSV_Time(brk.time) : "") + "," +   // LateBreakTime فقط اگر شکست ظرفِ ساعتِ پایانیِ پیش از EOD بود
          "" + "," + "" + "," +
-         "0.00" + "," + "" + "," + "" + "," + "" + "," + "" + "," +   // MFE=0 طبقِ قراردادِ برگه‌ی چشمی، بقیه خالی
+         "0.00" + "," + "" + "," + "" + "," + "" + "," + "" + "," + "" + "," +   // MFE=0 طبقِ قراردادِ برگه‌ی چشمی، بقیه خالی
          "" + "," + "" + "," + "" + "," + "NeverTriggered" + "," +
          biasStr + "," + slopeStr + "," + newsStr + "," + boxStartSrv + "," + boxEndSrv;
 
@@ -201,13 +201,14 @@ bool ProcessOneDay(int handle, string symbol, int daysAgo,
    SNYTradeOutcome outcomeMarket;
    NY_ComputeTradeOutcome(dayRates, count, breakIdx, edge, brk.dir, boxSize, outcomeMarket);
 
-   double dayNetR = 0; bool haveDayNetR = false;
+   double dayNetR = 0, dayNetRPotential = 0; bool haveDayNetR = false;
    if(fill.filled)
    {
       int fillIdx = NY_FindBarIndex(dayRates, count, fill.time);
       SNYTradeOutcome outcomeLimit;
       NY_ComputeTradeOutcome(dayRates, count, fillIdx, edge, brk.dir, boxSize, outcomeLimit);
       dayNetR = outcomeLimit.exitR;
+      dayNetRPotential = outcomeLimit.potentialR;
       haveDayNetR = true;
    }
 
@@ -224,7 +225,8 @@ bool ProcessOneDay(int handle, string symbol, int daysAgo,
       CSV_Bool(fill.filled) + "," + (fill.filled ? CSV_Time(fill.time) : "") + "," +
       CSV_Num(outcomeMarket.mfeBoxes, 2) + "," + CSV_Num(outcomeMarket.maeBoxes, 2) + "," +
       CSV_Num(outcomeMarket.eodBoxesSigned, 2) + "," +
-      (haveDayNetR ? CSV_Num(dayNetR, 3) : "") + "," + CSV_Num(outcomeMarket.exitR, 3) + "," +
+      (haveDayNetR ? CSV_Num(dayNetR, 3) : "") + "," +
+      (haveDayNetR ? CSV_Num(dayNetRPotential, 3) : "") + "," + CSV_Num(outcomeMarket.exitR, 3) + "," +
       CSV_Bool(rev.triggered) + "," +
       (rev.triggered ? CSV_Num(rev.revMFEBoxes, 2) : "") + "," +
       (rev.triggered ? CSV_Num(rev.outcome.exitR, 3) : "") + "," + rev.outcomeLabel + "," +
