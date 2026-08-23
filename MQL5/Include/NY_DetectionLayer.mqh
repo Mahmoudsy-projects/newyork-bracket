@@ -127,7 +127,7 @@ struct SNYTradeOutcome
    bool     stopHit;
    bool     tpHit;
    datetime exitTime;      // ۰ اگر تا EOD نه استاپ نه TP خورد
-   double   exitR;         // -1 اگر استاپ، TP_Boxes/۰.۷۵ اگر TP، وگرنه R تا کلوزِ EOD (می‌تواند منفی باشد)
+   double   exitR;         // -1 اگر استاپ، TP_Boxes/۰.۷۵ اگر TP، وگرنه mfeBoxes/۰.۷۵ (v1.4؛ همیشه >=۰)
    double   eodBoxesSigned; // فاصله‌ی کلوزِ EOD از لبه، واحدِ باکس، علامت‌دار (مثبت=جهتِ موافق)
 };
 
@@ -187,8 +187,16 @@ void NY_ComputeTradeOutcome(const MqlRates &rates[], int count, int entryIdx, do
    double eodSigned = (dir > 0) ? (eodClose - edge) : (edge - eodClose);
    out.eodBoxesSigned = eodSigned / boxSize;
 
+   // v1.4 (ریشه‌یابیِ اعتبارسنجیِ هم‌فیدِ XChief — دستورِ مدیرِ پروژه): روزهایی که نه استاپ نه TP
+   // کامل خوردند، exitR را از EOD_Boxes می‌ساختیم؛ اما دیتایِ XChief (که اختلافِ بروکر را از معادله
+   // حذف کرد) نشان داد این فرمول اشتباه است — Reward_R برگه‌ی چشمی برایِ این روزها دقیقاً
+   // MFE_Boxes/۰.۷۵ است (بیشینه‌ی حرکتِ موافقِ همان روز، نه قیمتِ کلوزِ EOD). تأییدِ آماری: با فرمولِ
+   // EOD تطابق ۱۶٪ بود، با MFE به ۸۱٪ رسید (n=۶۳ روزِ «نه‌استاپ-نه‌TP‌کامل» رویِ هر سه پنجره). دلیلِ
+   // منطقی: محمود در پاسِ چشمی «تا کجا رفت» را ثبت می‌کرده، نه «کجا بست» — چون MAE هم (تصمیمِ ۵)
+   // فقط تا استاپ ردیابی می‌شود، بدونِ اینکه رسیدن به TP آن را freeze کند، mfeBoxes همیشه <TP_BOXES
+   // است اینجا (وگرنه tpHit بالا true می‌شد) — پس نیازی به cap نیست.
    if(!exitDetermined)
-      out.exitR = eodSigned / (NY_STOP_DEPTH_PCT * boxSize);
+      out.exitR = out.mfeBoxes / NY_STOP_DEPTH_PCT;
 }
 
 //------------------------------------------------------------------
