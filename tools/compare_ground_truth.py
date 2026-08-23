@@ -28,11 +28,20 @@ TOL_BOXES = 0.15
 TOL_R = 0.15
 
 
+# مهم: هم ground truth (ستونِ Break_Dir) و هم CSVِ تولیدشده (ستونِ BreakDir) از رشته‌ی تحت‌اللفظیِ
+# "None" به‌عنوانِ یک مقدارِ معتبر (نه missing) استفاده می‌کنند — اما لیستِ NA پیش‌فرضِ pandas دقیقاً
+# شاملِ رشته‌ی "None" است (هم‌راه با "NA"/"NaN"/"null"...)، پس بدونِ keep_default_na=False هر روزِ
+# None به NaN تبدیل می‌شد و همه‌ی مقایسه‌ها با BreakDir=None را کاذباً «نامنطبق» نشان می‌داد. فقط
+# رشته‌ی خالی "" را NA حساب می‌کنیم (فیلدهایِ واقعاً خالیِ CSV، مثلِ MFE_Boxes روزهایِ None).
+def _read_csv_safe(path):
+    return pd.read_csv(path, keep_default_na=False, na_values=[""])
+
+
 def load_ground_truth(window):
     path = os.path.join(GROUND_TRUTH_DIR, f"Box_{window}.csv")
     if not os.path.exists(path):
         raise SystemExit(f"ground truth یافت نشد: {path}")
-    gt = pd.read_csv(path)
+    gt = _read_csv_safe(path)
     gt["Date"] = pd.to_datetime(gt["Date"]).dt.strftime("%Y-%m-%d")
     return gt
 
@@ -40,7 +49,7 @@ def load_ground_truth(window):
 def load_generated(path):
     if not os.path.exists(path):
         raise SystemExit(f"CSVِ تولیدشده یافت نشد: {path}")
-    df = pd.read_csv(path)
+    df = _read_csv_safe(path)
     df["Date"] = pd.to_datetime(df["Date"]).dt.strftime("%Y-%m-%d")
     return df
 
