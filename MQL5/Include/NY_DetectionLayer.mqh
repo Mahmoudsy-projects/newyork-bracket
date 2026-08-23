@@ -104,10 +104,10 @@ void NY_DetectFill(const MqlRates &rates[], int count, int breakIdx, double edge
 // استاپ = edge - dir*۰.۷۵*boxSize ($ عقب‌تر از لبه، داخلِ باکس). TP = edge + dir*۲*boxSize.
 // هم‌زمانیِ استاپ/TP در یک کندل → محافظه‌کارانه استاپ برنده است (نمی‌توان ترتیبِ درون‌کندلی را از
 // OHLC اثبات کرد — همان اصلِ پذیرفته‌شده‌ی LP_CheckLeg پروژه‌ی توکیو).
-// MFE/MAE: بیشینه‌ی حرکتِ موافق/مخالف نسبت به لبه (واحدِ باکس)، از entryIdx تا *لحظه‌ی خروج*
-// (استاپ/TP، هرکدام زودتر) — نه تا EOD. اگر تا EOD نه استاپ نه TP خورد، تا آخرِ روز ادامه می‌یابد.
-// (v1.1: قبلاً بدونِ توجه به خروج تا EOD ادامه می‌یافت؛ طبقِ قدمِ ۲ با ground truth جور درنمی‌آمد —
-// محمود در پاسِ چشمی بعدِ رسیدنِ روز به نتیجه دیگر آن روز را دنبال نمی‌کرده. نگاه کن به پایینِ حلقه.)
+// MFE/MAE: بیشینه‌ی حرکتِ موافق/مخالف نسبت به لبه (واحدِ باکس)، از entryIdx تا *لحظه‌ی استاپ* —
+// نه تا EOD. اگر روز TP بخورد یا تا EOD نه استاپ نه TP بخورد، ردیابی تا آخرِ روز ادامه می‌یابد
+// (TP فقط exitR را قفل می‌کند، ردیابیِ MFE/MAE را متوقف نمی‌کند). (v1.2 — نگاه کن به پایینِ حلقه
+// و docs/NY_FrozenDefinitions.md برایِ تاریخچه‌ی این تصمیم.)
 //------------------------------------------------------------------
 struct SNYTradeOutcome
 {
@@ -153,9 +153,16 @@ void NY_ComputeTradeOutcome(const MqlRates &rates[], int count, int entryIdx, do
          bool tpHere   = (dir > 0) ? (rates[i].high >= tpLevel)   : (rates[i].low  <= tpLevel);
          if(stopHere)
          {
+            // v1.2 (ریشه‌یابیِ دورِ دومِ قدمِ ۲): فقط استاپ باعثِ freeze شدنِ MFE/MAE می‌شود، نه TP.
+            // با «freeze در هر دو» (v1.1)، MAE خیلی بهتر جور درآمد (۳۲٪→۶۰٪) اما MFE بدتر شد (۸۰٪→۷۴٪)
+            // — نمونه‌ها نشان دادند ground truth حتی روزهایی که TP (۲باکس) خورده، MFE بالایِ ۲ باکس
+            // (تا ۶.۵ باکس) ثبت کرده؛ یعنی محمود بعدِ TP هم به دیدنِ حداکثرِ حرکتِ روز ادامه می‌داده
+            // (شاید برایِ سنجشِ رانرها)، ولی بعدِ استاپ (ضرر) دیگر دنبال نمی‌کرده. پس: استاپ = توقفِ
+            // کاملِ ردیابی (break)؛ TP فقط exitR/tpHit را قفل می‌کند، ردیابیِ MFE/MAE تا EOD ادامه دارد.
             out.stopHit = true; out.exitTime = rates[i].time;
             out.exitR = -1.0;
             exitDetermined = true;
+            break;
          }
          else if(tpHere)
          {
@@ -163,13 +170,6 @@ void NY_ComputeTradeOutcome(const MqlRates &rates[], int count, int entryIdx, do
             out.exitR = NY_TP_BOXES / NY_STOP_DEPTH_PCT;
             exitDetermined = true;
          }
-         // v1.1 (ریشه‌یابیِ قدمِ ۲ — نگاه کن به NY_FrozenDefinitions.md، بخشِ «تصمیمِ پیاده‌سازیِ ۵»):
-         // با break از حلقه، MFE/MAE دقیقاً همین‌جا (تا و شاملِ کندلِ خروج) freeze می‌شوند. قبلِ این
-         // فیکس، حلقه تا EOD ادامه می‌یافت و حرکتِ قیمت *بعدِ* استاپ/TP را هم در MFE/MAE لحاظ می‌کرد —
-         // که با ground truth جور درنمی‌آمد (مثلاً ۲۰۲۶-۰۸-۱۱: MFE_gt=۰.۵ در برابرِ MFE_mechanical=۲.۳۱
-         // قبل از فیکس)، چون محمود در پاسِ چشمی بعدِ رسیدنِ روز به نتیجه (استاپ/TP) دیگر ادامه‌ی
-         // چارت را برایِ آن روز نگاه نمی‌کرده.
-         if(exitDetermined) break;
       }
    }
 
