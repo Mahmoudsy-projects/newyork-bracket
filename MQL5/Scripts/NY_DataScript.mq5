@@ -152,7 +152,7 @@ bool ProcessOneDay(int handle, string symbol, int daysAgo,
    double boxSize = box.high - box.low;
 
    SNYBreak brk;
-   NY_DetectBreak(dayRates, count, box.high, box.low, boxCloseInstant, brk);
+   NY_DetectBreak(dayRates, count, box.high, box.low, eodInstant, brk);
 
    // --- بایاس (log-only، مستقلِ از نتیجه‌ی شکست) ---
    int biasDir = 0, slopeDir = 0;
@@ -165,8 +165,8 @@ bool ProcessOneDay(int handle, string symbol, int daysAgo,
    string boxStartSrv = CSV_TimeSec(box.start);
    string boxEndSrv    = CSV_TimeSec(box.end);
 
-   // --- روزِ بدونِ شکستِ معتبر (کلاً یا فقط دیرتر از ۶۰ دقیقه) ---
-   bool tradable = brk.found && brk.validWithin60;
+   // --- روزِ بدونِ شکستِ معتبر (کلاً یا فقط ظرفِ ساعتِ پایانیِ پیش از EOD — v1.3) ---
+   bool tradable = brk.found && brk.valid;
    if(!tradable)
    {
       if(!brk.found) cntNone++; else cntLate++;
@@ -174,7 +174,7 @@ bool ProcessOneDay(int handle, string symbol, int daysAgo,
       string row = dateStr + "," + InpWindowLabel + "," +
          CSV_Num(box.high, g_digits) + "," + CSV_Num(box.low, g_digits) + "," + CSV_Num(boxSize, g_digits) + "," +
          "None" + "," + "" + "," + "" + "," +
-         (brk.found ? CSV_Time(brk.time) : "") + "," +   // LateBreakTime فقط اگر شکستی رخ داد ولی دیر بود
+         (brk.found ? CSV_Time(brk.time) : "") + "," +   // LateBreakTime فقط اگر شکست ظرفِ ساعتِ پایانیِ پیش از EOD بود
          "" + "," + "" + "," +
          "0.00" + "," + "" + "," + "" + "," + "" + "," + "" + "," +   // MFE=0 طبقِ قراردادِ برگه‌ی چشمی، بقیه خالی
          "" + "," + "" + "," + "" + "," + "NeverTriggered" + "," +
