@@ -20,6 +20,13 @@
 //| (compare_ground_truth.py) هر دو را با Reward_R می‌سنجد تا معلوم شود    |
 //| کدام مدل با پاسِ چشمی هم‌خوان است. نگاه کن به                          |
 //| docs/NY_FrozenDefinitions.md، بخشِ «سؤالِ باز».                        |
+//|                                                                    |
+//| v1.6 (دستورِ مدیرِ پروژه، ۲۳ اوت — برایِ اجرایِ قدمِ ۳ی موقت): دو تغییرِ   |
+//| ابزاری، بدونِ دست‌زدن به تعریف‌هایِ فریزشده‌یِ v1.5:                       |
+//|  ۱) InpStopDepthPct: عمقِ استاپ حالا پارامتریک است (پیش‌فرض ۰.۷۵ =       |
+//|     همان فریزشده) — برایِ جاروی سؤالِ ۲ (۰.۵/۰.۶/۰.۷۵) با سه اجرا.       |
+//|  ۲) NewsDay پیش‌فرض از تقویمِ اقتصادیِ داخلیِ MT5 پر می‌شود (USD/HIGH)،   |
+//|     نه فایلِ خارجی — InpNewsCalendarFile فقط پلن B (دستی) است.          |
 //+------------------------------------------------------------------+
 #property copyright "newyork-bracket"
 #property script_show_inputs
@@ -38,9 +45,14 @@ input int InpBoxEndH   = 9,  InpBoxEndM   = 30; // پایانِ باکس، به 
 
 input int InpEODHourServer = 23, InpEODMinServer = 50; // EOD به وقتِ سرور (قیدِ سند: ۲۳:۵۰ سرور)
 
-// اختیاری: فایلِ CSV تقویمِ اقتصادی (در MQL5/Files/) با فرمتِ هر خط "YYYY-MM-DD,EventName" —
-// برایِ ستونِ NewsDay (log-only، بدونِ اثر روی هیچ منطقی). خالی = ستونِ NewsDay همیشه خالی می‌ماند.
-input string InpNewsCalendarFile = "";
+// v1.6 (دستورِ مدیرِ پروژه، بندِ ۴): ستونِ NewsDay دیگر نیازمندِ فایلِ خارجی نیست — پیش‌فرض از
+// تقویمِ اقتصادیِ داخلیِ MT5 (CalendarValueHistory، currency=USD، importance=HIGH) پر می‌شود.
+// پلن B (اگر عمقِ تاریخیِ تقویمِ ترمینال کافی نبود): InpNewsCalendarFile را پر کن تا فایلِ دستیِ
+// "YYYY-MM-DD,EventName" جایگزین/مکمل شود.
+input bool   InpNewsFromMT5Calendar = true;  // true = NewsDay از تقویمِ داخلیِ MT5 پر شود
+input string InpNewsCalendarFile    = "";    // پلن B: فایلِ CSV دستی (در MQL5/Files/)
+
+input double InpStopDepthPct = 0.75; // v1.6 (جاروی سؤالِ ۲): عمقِ استاپ، پیش‌فرضِ فریزشده = ۰.۷۵
 
 #define NY_MAX_NEWS_ROWS 2000
 
@@ -64,22 +76,42 @@ bool EnsureHistoryLoaded(string symbol)
 }
 
 //------------------------------------------------------------------
-// تقویمِ اخبار — اختیاری. فرمتِ ورودی: هر خط "YYYY-MM-DD,EventName" (بدونِ هدر). چند رویداد در
-// یک روز را در فایلِ ورودی با چند خطِ هم‌تاریخ بدهید؛ اینجا با ";" به هم می‌چسبند.
+// کمکی: افزودن/ادغامِ یک رویدادِ خبری در آرایه‌ی سراسری (چند خبرِ هم‌تاریخ با ";" به هم می‌چسبند).
 //------------------------------------------------------------------
-void LoadNewsCalendar()
+void AddNewsEvent(string dateStr, string evt)
 {
-   g_newsCount = 0;
+   if(g_newsCount >= NY_MAX_NEWS_ROWS) return;
+   for(int i = 0; i < g_newsCount; i++)
+   {
+      if(g_newsDates[i] == dateStr)
+      {
+         // از تکرارِ همان رویداد (اگر هم پلن B هم تقویمِ MT5 فعال باشند) جلوگیری کن.
+         if(StringFind(g_newsEvents[i], evt) < 0) g_newsEvents[i] += ";" + evt;
+         return;
+      }
+   }
+   g_newsDates[g_newsCount] = dateStr;
+   g_newsEvents[g_newsCount] = evt;
+   g_newsCount++;
+}
+
+//------------------------------------------------------------------
+// تقویمِ اخبار — پلن B، دستی. فرمتِ ورودی: هر خط "YYYY-MM-DD,EventName" (بدونِ هدر). چند رویداد در
+// یک روز را در فایلِ ورودی با چند خطِ هم‌تاریخ بدهید.
+//------------------------------------------------------------------
+void LoadNewsCalendarFromFile()
+{
    if(InpNewsCalendarFile == "") return;
 
    int handle = FileOpen(InpNewsCalendarFile, FILE_READ | FILE_TXT | FILE_ANSI);
    if(handle == INVALID_HANDLE)
    {
-      PrintFormat("NY_DataScript: فایلِ تقویمِ اخبار '%s' باز نشد (کدِ خطا %d) — ستونِ NewsDay خالی می‌ماند.",
+      PrintFormat("NY_DataScript: فایلِ تقویمِ اخبار '%s' باز نشد (کدِ خطا %d) — این منبع نادیده گرفته می‌شود.",
                   InpNewsCalendarFile, GetLastError());
       return;
    }
 
+   int loaded = 0;
    while(!FileIsEnding(handle) && g_newsCount < NY_MAX_NEWS_ROWS)
    {
       string line = FileReadString(handle);
@@ -88,22 +120,76 @@ void LoadNewsCalendar()
       if(comma <= 0) continue;
       string dateStr = StringSubstr(line, 0, comma);
       string evt      = StringSubstr(line, comma + 1);
-
-      // اگر همین تاریخ قبلاً ثبت شده، رویداد را با ";" اضافه کن (چند خبرِ high-impact در یک روز).
-      bool merged = false;
-      for(int i = 0; i < g_newsCount; i++)
-      {
-         if(g_newsDates[i] == dateStr) { g_newsEvents[i] += ";" + evt; merged = true; break; }
-      }
-      if(!merged)
-      {
-         g_newsDates[g_newsCount] = dateStr;
-         g_newsEvents[g_newsCount] = evt;
-         g_newsCount++;
-      }
+      AddNewsEvent(dateStr, evt);
+      loaded++;
    }
    FileClose(handle);
-   PrintFormat("NY_DataScript: %d روزِ خبری از '%s' بارگذاری شد.", g_newsCount, InpNewsCalendarFile);
+   PrintFormat("NY_DataScript: %d ردیفِ خبری از فایلِ دستیِ '%s' بارگذاری شد.", loaded, InpNewsCalendarFile);
+}
+
+//------------------------------------------------------------------
+// تقویمِ اخبار — پیش‌فرضِ v1.6: تقویمِ اقتصادیِ داخلیِ MT5. رویدادهایِ USD/HIGH بینِ fromTime و
+// toTime (وقتِ سرور) را می‌گیرد و بر اساسِ تاریخِ تقویمیِ سرورِ همان رویداد در g_newsDates ثبت
+// می‌کند. توجه: زمانِ رویداد در MqlCalendarValue.time طبقِ مستنداتِ MQL5 وقتِ سرور/GMT-پایه است؛
+// چون این ستون فقط تشخیصی/log-only است (بدونِ اثر روی هیچ منطقِ ترید)، خطایِ احتمالیِ کوچکِ
+// مرزِ روز (اطرافِ نیمه‌شب) قابلِ‌قبول است — طبقِ دستورِ مدیرِ پروژه.
+//------------------------------------------------------------------
+void LoadNewsCalendarFromMT5(datetime fromTime, datetime toTime)
+{
+   MqlCalendarValue values[];
+   int total = CalendarValueHistory(values, fromTime, toTime, NULL, "USD");
+   if(total < 0)
+   {
+      PrintFormat("NY_DataScript: CalendarValueHistory شکست خورد (کدِ خطا %d) — تقویمِ MT5 نادیده گرفته می‌شود.",
+                  GetLastError());
+      return;
+   }
+
+   int highImpactCount = 0;
+   for(int i = 0; i < total && g_newsCount < NY_MAX_NEWS_ROWS; i++)
+   {
+      MqlCalendarEvent ev;
+      if(!CalendarEventById(values[i].event_id, ev)) continue;
+      if(ev.importance != CALENDAR_IMPORTANCE_HIGH) continue;
+
+      MqlDateTime dt;
+      TimeToStruct(values[i].time, dt);
+      string dateStr = StringFormat("%04d-%02d-%02d", dt.year, dt.mon, dt.day);
+      AddNewsEvent(dateStr, ev.name);
+      highImpactCount++;
+   }
+   PrintFormat("NY_DataScript: %d رویدادِ USD/HIGH از تقویمِ داخلیِ MT5 بینِ %s و %s بارگذاری شد.",
+               highImpactCount, TimeToString(fromTime, TIME_DATE), TimeToString(toTime, TIME_DATE));
+}
+
+//------------------------------------------------------------------
+// چکِ عمقِ تاریخیِ تقویم — دستورِ مدیرِ پروژه: باید تا ۲۰۲۵-۰۳-۱۷ برسد (شروعِ دیتاستِ ۱۷ماهه).
+// اگر نرسید، این پیام به‌وضوح چاپ می‌شود تا محمود به مدیرِ پروژه اطلاع دهد (پلن B: تقویمِ دستی).
+//------------------------------------------------------------------
+void CheckCalendarDepth()
+{
+   datetime probeFrom = StringToTime("2025.03.17 00:00");
+   datetime probeTo    = StringToTime("2025.03.24 00:00");
+   MqlCalendarValue probe[];
+   int n = CalendarValueHistory(probe, probeFrom, probeTo, NULL, "USD");
+   if(n > 0)
+      PrintFormat("NY_DataScript: چکِ عمقِ تقویم OK — %d رویدادِ USD در بازه‌ی ۲۰۲۵-۰۳-۱۷..۲۰۲۵-۰۳-۲۴ پیدا شد.", n);
+   else
+      Print("NY_DataScript: هشدار — تقویمِ داخلیِ MT5 تا ۲۰۲۵-۰۳-۱۷ عمقِ کافی ندارد (صفر رویداد در آن هفته). ",
+            "طبقِ دستورِ مدیرِ پروژه: این را گزارش کن تا پلن B (تقویمِ دستی از منابعِ رسمی) ساخته شود.");
+}
+
+//------------------------------------------------------------------
+void LoadNewsCalendar(datetime historyFrom, datetime historyTo)
+{
+   g_newsCount = 0;
+   if(InpNewsFromMT5Calendar)
+   {
+      CheckCalendarDepth();
+      LoadNewsCalendarFromMT5(historyFrom, historyTo);
+   }
+   LoadNewsCalendarFromFile(); // پلن B: مکمل/جایگزینِ دستی، اگر پر شده باشد
+   PrintFormat("NY_DataScript: مجموعِ %d روزِ خبری در ستونِ NewsDay ثبت شد.", g_newsCount);
 }
 
 string LookupNewsDay(string dateStr)
@@ -248,9 +334,19 @@ void OnStart()
       return;
    }
 
-   LoadNewsCalendar();
+   NY_StopDepthPct = InpStopDepthPct; // v1.6: جاروی سؤالِ ۲ — پیش‌فرض ۰.۷۵ (فریزشده)
 
-   string outFile = StringFormat("NY_History_%s.csv", InpWindowLabel);
+   datetime firstDate = (datetime)SeriesInfoInteger(symbol, PERIOD_M5, SERIES_FIRSTDATE);
+   int maxDaysAgo = (int)((TimeTradeServer() - firstDate) / 86400) + 3;
+   if(maxDaysAgo < 1) maxDaysAgo = 1;
+
+   LoadNewsCalendar(firstDate, TimeTradeServer());
+
+   // v1.6: اگر جاروی سؤالِ ۲ در حالِ اجراست (استاپِ غیرِپیش‌فرض)، نامِ فایل را جدا کن تا سه اجرا
+   // رویِ هم نوشته نشوند — مثلاً NY_History_0900-1000_sd60.csv برایِ InpStopDepthPct=0.60.
+   string outFile = (MathAbs(InpStopDepthPct - 0.75) < 0.0001)
+                     ? StringFormat("NY_History_%s.csv", InpWindowLabel)
+                     : StringFormat("NY_History_%s_sd%02d.csv", InpWindowLabel, (int)MathRound(InpStopDepthPct * 100));
    int handle = FileOpen(outFile, FILE_WRITE | FILE_TXT | FILE_ANSI);
    if(handle == INVALID_HANDLE)
    {
@@ -258,10 +354,6 @@ void OnStart()
       return;
    }
    FileWriteString(handle, NY_CSV_HEADER + "\r\n");
-
-   datetime firstDate = (datetime)SeriesInfoInteger(symbol, PERIOD_M5, SERIES_FIRSTDATE);
-   int maxDaysAgo = (int)((TimeTradeServer() - firstDate) / 86400) + 3;
-   if(maxDaysAgo < 1) maxDaysAgo = 1;
 
    int processed = 0, skipped = 0;
    int cntBuy = 0, cntSell = 0, cntNone = 0, cntLate = 0;
@@ -281,7 +373,7 @@ void OnStart()
    FileClose(handle);
 
    Print("=== NY Box History Export Complete ===");
-   PrintFormat("Symbol: %s   Window: %s   Output: %s", symbol, InpWindowLabel, outFile);
+   PrintFormat("Symbol: %s   Window: %s   StopDepthPct: %.2f   Output: %s", symbol, InpWindowLabel, NY_StopDepthPct, outFile);
    Print("Processed days: ", processed, "   Skipped days: ", skipped);
    PrintFormat("BreakDir -> Buy: %d  Sell: %d  None(no break): %d  None(late break): %d", cntBuy, cntSell, cntNone, cntLate);
    int tradableDays = cntBuy + cntSell;

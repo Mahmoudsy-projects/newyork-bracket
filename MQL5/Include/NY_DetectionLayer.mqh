@@ -27,8 +27,13 @@
 
 #define NY_LAST_HOUR_CUTOFF_SEC     3600   // v1.3: شکست ظرفِ این مدت پیش از EOD دیگر معتبر نیست
 #define NY_FILL_WINDOW_SEC          3600   // ۶۰ دقیقه از کلوزِ کندلِ شکست
-#define NY_STOP_DEPTH_PCT           0.75   // استاپ = ۷۵٪ ارتفاعِ باکس
 #define NY_TP_BOXES                 2.0    // TP = ۲ باکس
+
+// v1.6 (دستورِ مدیرِ پروژه، جاروی استاپ {۰.۵,۰.۶,۰.۷۵}): NY_STOP_DEPTH_PCT دیگر #define ثابت
+// نیست، یک متغیرِ سراسری با مقدارِ پیش‌فرضِ فریزشده‌ی ۷۵٪ است — NY_DataScript.mq5 آن را از
+// InpStopDepthPct ست می‌کند. تعریفِ فریزشده دست‌نخورده می‌ماند (پیش‌فرض ۰.۷۵)؛ فقط برایِ اجرایِ
+// جاروی سؤالِ ۲ (قدمِ ۳) قابلِ‌تغییر شده.
+double NY_StopDepthPct = 0.75;   // استاپ = این‌درصد × ارتفاعِ باکس
 
 //------------------------------------------------------------------
 // شکست — بخشِ «شکستِ معتبر» سند.
@@ -149,7 +154,7 @@ void NY_ComputeTradeOutcome(const MqlRates &rates[], int count, int entryIdx, do
    if(entryIdx < 0 || entryIdx >= count || boxSize <= 0) return;
    out.hasData = true;
 
-   double stopLevel = edge - dir * NY_STOP_DEPTH_PCT * boxSize;
+   double stopLevel = edge - dir * NY_StopDepthPct * boxSize;
    double tpLevel   = edge + dir * NY_TP_BOXES * boxSize;
    bool exitDetermined = false;
 
@@ -180,7 +185,7 @@ void NY_ComputeTradeOutcome(const MqlRates &rates[], int count, int entryIdx, do
          else if(tpHere)
          {
             out.tpHit = true; out.exitTime = rates[i].time;
-            out.exitR = NY_TP_BOXES / NY_STOP_DEPTH_PCT;
+            out.exitR = NY_TP_BOXES / NY_StopDepthPct;
             out.potentialR = out.exitR;
             exitDetermined = true;
          }
@@ -202,8 +207,8 @@ void NY_ComputeTradeOutcome(const MqlRates &rates[], int count, int entryIdx, do
    // جداگانه ذخیره می‌شود — ستونِ تشخیصیِ CSV که باید با Reward_R سنجیده شود، نه با DayNet_R.
    if(!exitDetermined)
    {
-      out.exitR = eodSigned / (NY_STOP_DEPTH_PCT * boxSize);
-      out.potentialR = out.mfeBoxes / NY_STOP_DEPTH_PCT;
+      out.exitR = eodSigned / (NY_StopDepthPct * boxSize);
+      out.potentialR = out.mfeBoxes / NY_StopDepthPct;
    }
 }
 
