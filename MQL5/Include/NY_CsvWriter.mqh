@@ -43,9 +43,13 @@ string CSV_Bool(bool b) { return(b ? "1" : "0"); }
 // DayNet_R_Potential (v1.5): سقفِ MFE-based روزِ ترید — «تا کجا می‌شد رسید» (mfeBoxes/۰.۷۵ برایِ
 // روزهایِ نه‌استاپ-نه‌TP)، برایِ سنجش با ستونِ Reward_R برگه‌ی چشمی. DayNet_R خودش (ستونِ رسمی)
 // نتیجه‌ی واقعیِ کلوزِ EOD را می‌سنجد؛ این دو مفهومِ مجزا هستند — نگاه کن به NY_FrozenDefinitions.md.
+// BoxClose_Pos (v1.7 — دستورِ مدیرِ پروژه، ۲۴ اوت، فرضیه‌یِ لگِ داخلیِ محمود): جایِ کلوزِ باکس در
+// رنجِ خودش — (BoxClose-BoxLow)/BoxSize، ۰=کف، ۱=سقف. **فقط log/گزارش، بدونِ اثر روی هیچ منطقی**؛
+// عمداً *آخرِ* هدر اضافه شده تا هیچ ستونِ قبلی/ایندکسش جابه‌جا نشود (تستِ هم‌ارزیِ دستورِ مدیرِ پروژه).
 const string NY_CSV_HEADER =
    "Date,Window,BoxHigh,BoxLow,BoxSize,BreakDir,BreakTime,BreakDist,LateBreakTime,"
    "RetestWithin60,FillTime,MFE_Boxes,MAE_Boxes,EOD_Boxes,DayNet_R,DayNet_R_Potential,DayNet_R_MarketEntry,"
-   "Rev_Triggered,Rev_MFE,Rev_ExitR,Rev_Outcome,Bias_Daily,EMA_Slope,NewsDay,BoxStart_Server,BoxEnd_Server";
+   "Rev_Triggered,Rev_MFE,Rev_ExitR,Rev_Outcome,Bias_Daily,EMA_Slope,NewsDay,BoxStart_Server,BoxEnd_Server,"
+   "BoxClose_Pos";
 
 #endif // NY_CSVWRITER_MQH

@@ -27,6 +27,10 @@
 //|     همان فریزشده) — برایِ جاروی سؤالِ ۲ (۰.۵/۰.۶/۰.۷۵) با سه اجرا.       |
 //|  ۲) NewsDay پیش‌فرض از تقویمِ اقتصادیِ داخلیِ MT5 پر می‌شود (USD/HIGH)،   |
 //|     نه فایلِ خارجی — InpNewsCalendarFile فقط پلن B (دستی) است.          |
+//|                                                                    |
+//| v1.7 (دستورِ مدیرِ پروژه، ۲۴ اوت — کارِ ۴ی نسخه‌ی نهایی): ستونِ آخرِ CSV   |
+//| اضافه شد: `BoxClose_Pos` = (BoxClose-BoxLow)/BoxSize — فقط log/گزارش،   |
+//| بدونِ اثر روی هیچ منطقی و بدونِ جابه‌جاییِ هیچ ستونِ قبلی (تستِ هم‌ارزی).   |
 //+------------------------------------------------------------------+
 #property copyright "newyork-bracket"
 #property script_show_inputs
@@ -236,6 +240,8 @@ bool ProcessOneDay(int handle, string symbol, int daysAgo,
    string dateStr = StringFormat("%04d-%02d-%02d", y, m, d);
 
    double boxSize = box.high - box.low;
+   // v1.7 (فرضیه‌یِ لگِ داخلیِ محمود، log-only): جایِ کلوزِ باکس در رنجِ خودش، ۰=کف، ۱=سقف.
+   double boxClosePos = (boxSize > 0) ? (box.close - box.low) / boxSize : 0.0;
 
    SNYBreak brk;
    NY_DetectBreak(dayRates, count, box.high, box.low, eodInstant, brk);
@@ -264,7 +270,8 @@ bool ProcessOneDay(int handle, string symbol, int daysAgo,
          "" + "," + "" + "," +
          "0.00" + "," + "" + "," + "" + "," + "" + "," + "" + "," + "" + "," +   // MFE=0 طبقِ قراردادِ برگه‌ی چشمی، بقیه خالی
          "" + "," + "" + "," + "" + "," + "NeverTriggered" + "," +
-         biasStr + "," + slopeStr + "," + newsStr + "," + boxStartSrv + "," + boxEndSrv;
+         biasStr + "," + slopeStr + "," + newsStr + "," + boxStartSrv + "," + boxEndSrv + "," +
+         CSV_Num(boxClosePos, 4);
 
       FileWriteString(handle, row + "\r\n");
       return(true);
@@ -316,7 +323,8 @@ bool ProcessOneDay(int handle, string symbol, int daysAgo,
       CSV_Bool(rev.triggered) + "," +
       (rev.triggered ? CSV_Num(rev.revMFEBoxes, 2) : "") + "," +
       (rev.triggered ? CSV_Num(rev.outcome.exitR, 3) : "") + "," + rev.outcomeLabel + "," +
-      biasStr + "," + slopeStr + "," + newsStr + "," + boxStartSrv + "," + boxEndSrv;
+      biasStr + "," + slopeStr + "," + newsStr + "," + boxStartSrv + "," + boxEndSrv + "," +
+      CSV_Num(boxClosePos, 4);
 
    FileWriteString(handle, row + "\r\n");
    return(true);
