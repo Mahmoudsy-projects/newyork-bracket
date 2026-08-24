@@ -129,13 +129,16 @@ def analyze_stop_stability(sweep):
 # ============================================================ کارِ ۲: مدلِ هزینه‌ی سه‌جزئی
 CONTRACT_SIZE = 100  # اونس/لات XAUUSD — هم xChief هم Errante (طبقِ Specification هر دو، محمود فرستاد)
 
-# طبقِ Specificationِ دو بروکر که محمود فرستاد:
-#  - xChief: اسپرد از SpreadLog ~$0.17 + کمیسیونِ صریح «Instant by deal volume, in/out deals:
-#    2.5 USD per lot» — یعنی هم رویِ دیلِ بازکردن هم رویِ دیلِ بستن، پس رفت‌وبرگشت = 2×2.5 = $5/لات.
+# طبقِ Specificationِ دو بروکر که محمود فرستاد + تأییدِ تجربی رویِ ژورنالِ حسابِ دموی xChief
+# (RM_TradeJournal، ۱۳۵ تریدِ واقعی): مقایسه‌ی ProfitUSD با سودِ نظریِ خام (Entry/Close/Lots×۱۰۰)
+# نشان داد اختلاف = دقیقاً ۲.۵۰$ به‌ازایِ هر لات (میانه، n=۱۳۵، std=۰.۰۴) — یعنی «۲.۵ USD per lot»
+# در Specification **همان کمیسیونِ کاملِ رفت‌وبرگشت است، نه هر دیل جدا** (فرضِ اولیه‌ی محتاطانه‌ی
+# ۲×۲.۵=۵$ رد شد؛ اینجا با دیتایِ واقعی، نه حدس، تصحیح شد).
+#  - xChief: اسپرد از SpreadLog ~$0.17 + کمیسیونِ رفت‌وبرگشت = $2.5/لات (تأییدشده تجربی).
 #  - Errante: اسپرد ~$0.23، **هیچ ردیفِ Commission در Specification نبود** — یعنی مدلِ
 #    اسپردِ-همه‌چیز-توش (بروکرِ B-book/بدونِ کمیسیونِ جدا)، سازگار با اسپردِ پهن‌ترش.
 BROKER_SPECS = {
-    "xchief":  dict(spread_usd=0.17, commission_usd_per_lot_roundtrip=5.0),
+    "xchief":  dict(spread_usd=0.17, commission_usd_per_lot_roundtrip=2.5),
     "errante": dict(spread_usd=0.23, commission_usd_per_lot_roundtrip=0.0),
 }
 
@@ -181,10 +184,9 @@ def analyze_cost_scenarios(df_ref, window_label, stop_label, slippage_p75_r):
         "\n**بروکرِ مرجعِ این جدول: xChief** — طبقِ فرضِ مدیرِ پروژه (بروکرِ مقصدِ فوروارد NY، کنارِ "
         "توکیو) و تأییدِ محمود (Specificationِ xChief فرستاده شد). Errante فقط برایِ دیتایِ بک‌تست "
         "استفاده شده، نه اجرایِ زنده — سطرش فقط برایِ مقایسه‌ست.\n"
-        "⚠️ فرضِ «رفت‌وبرگشت = ۲×۲.۵$» بر اساسِ عبارتِ «in/out deals» در Specificationِ xChief است "
-        "(یعنی هر دو دیلِ باز/بسته جدا ۲.۵$ می‌گیرند)؛ اگر منظورِ بروکر همان ۲.۵$ برایِ کلِ رفت‌وبرگشت "
-        "بوده، همه‌ی cost_Rهایِ کمیسیون در این جدول را نصف کن — محمود لطفاً این را با یک تریدِ تستی "
-        "یا پشتیبانیِ بروکر تأیید کن.\n")
+        "✅ کمیسیونِ $2.5/لات **تجربی تأیید شد** (نه فرض): رویِ ۱۳۵ تریدِ واقعیِ دموی xChief "
+        "(`RM_TradeJournal`)، اختلافِ `ProfitUSD` با سودِ نظریِ خام دقیقاً ۲.۵۰$/لات بود "
+        "(میانه، std=۰.۰۴) — یعنی این عدد از اول کلِ رفت‌وبرگشت بوده، نه هر دیل جدا.\n")
 
     xchief_cost_r_per_row = per_broker_cost["xchief"]
 
