@@ -143,7 +143,7 @@ BROKER_SPECS = {
 }
 
 
-def analyze_cost_scenarios(df_ref, window_label, stop_label, slippage_p75_r):
+def analyze_cost_scenarios(df_ref, window_label, stop_label, slippage_p75_r, slippage_p90_r=None):
     """پیکربندیِ مرجع: 0900-1000 / stop 0.50. هزینه به‌ازایِ هر لگ، از رویِ BoxSizeِ همان روز.
 
     نکته‌ی مهمِ تبدیلِ واحد: اسپرد یک کمیّتِ *قیمتی* است (مثلِ BoxSize)، پس نسبتش به BoxSize
@@ -197,24 +197,31 @@ def analyze_cost_scenarios(df_ref, window_label, stop_label, slippage_p75_r):
     else:
         lines.append("**سناریویِ P75ِ اسلیپیج: هنوز TODO** — لاینِ اصلی فقط میانه/میانگین داد، نه P75؛ "
                      "اختراع نکردم.\n")
+    if slippage_p90_r is not None:
+        scenarios.append((f"P90ِ اسلیپیج، سناریویِ استرس ({slippage_p90_r}R)", slippage_p90_r))
 
     lines.append("\n| سناریو (xChief، اسپرد+کمیسیون+اسلیپیج) | cost_R میانگین | E پس از هزینه | Sum پس از هزینه |")
     lines.append("|---|---|---|---|")
     raw_e = traded["DayNet_R"].astype(float).mean()
     raw_sum = traded["DayNet_R"].astype(float).sum()
+    worst_negative = None
     for name, slip_r in scenarios:
         total_cost_per_row = xchief_cost_r_per_row + slip_r
         adj = traded["DayNet_R"].astype(float) - total_cost_per_row
-        lines.append(f"| {name} | {total_cost_per_row.mean():.4f}R | {adj.mean():.4f} | {adj.sum():.2f} |")
+        adj_e = adj.mean()
+        lines.append(f"| {name} | {total_cost_per_row.mean():.4f}R | {adj_e:.4f} | {adj.sum():.2f} |")
+        if adj_e < 0 and worst_negative is None:
+            worst_negative = name
 
     lines.append(f"\nخام (بدونِ هیچ هزینه‌ای، برایِ مرجع): E={raw_e:.4f}  Sum={raw_sum:.2f}\n")
 
-    mean_scenario_cost = xchief_cost_r_per_row.mean() + SLIPPAGE_R["mean"]
     lines.append(
         "\n**آستانه‌ی مرگ (هزینه‌ای که E را صفر می‌کند):** cost_R بحرانی ≈ "
-        f"{raw_e:.4f}R به‌ازایِ هر لگ. سناریویِ میانگین (xChief) ≈ {mean_scenario_cost:.4f}R — "
-        f"{'زیرِ آستانه (E هنوز مثبت)' if mean_scenario_cost < raw_e else 'بالایِ آستانه (E منفی می‌شود)'}. "
-        "P75ِ اسلیپیج که برسد، این حکم باید دوباره چک شود.\n")
+        f"{raw_e:.4f}R به‌ازایِ هر لگ (میانگینِ اسپرد+کمیسیونِ ثابت ≈ {xchief_cost_r_per_row.mean():.4f}R، "
+        f"پس فقط اسلیپیجِ اضافه‌شده باید به ≈ {raw_e - xchief_cost_r_per_row.mean():.4f}R برسد تا E صفر شود). " +
+        (f"در هیچ‌کدام از سناریوهایِ بالا (تا P90) این آستانه رد نشد — E در همه‌شان مثبت ماند."
+         if worst_negative is None else
+         f"سناریویِ «{worst_negative}» و بدترِ آن، آستانه را رد می‌کنند (E منفی).") + "\n")
     return "\n".join(lines)
 
 
@@ -256,6 +263,7 @@ def main():
         for sd in ("50", "60", "75"):
             ap.add_argument(f"--sweep{w}-sd{sd}", dest=f"sweep{w}_sd{sd}", required=True)
     ap.add_argument("--slippage-p75-r", type=float, default=None)
+    ap.add_argument("--slippage-p90-r", type=float, default=None)
     ap.add_argument("--out", default="NY_FinalTasks_1-3.md")
     args = ap.parse_args()
 
@@ -271,7 +279,7 @@ def main():
     report.append(analyze_stop_stability(sweep))
 
     ref_df = sweep["0900-1000"][50]
-    report.append(analyze_cost_scenarios(ref_df, "0900-1000", "0.50", args.slippage_p75_r))
+    report.append(analyze_cost_scenarios(ref_df, "0900-1000", "0.50", args.slippage_p75_r, args.slippage_p90_r))
     report.append(analyze_newsday_boxsize(ref_df, "0900-1000", "0.50"))
 
     with open(args.out, "w", encoding="utf-8") as f:
