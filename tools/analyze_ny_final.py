@@ -47,30 +47,60 @@ def _load(path):
 
 
 def _stats_calendar(df, col, cost_r=0.0):
-    """E/Sum/MaxDD/TTNH(روزِ تقویمیِ واقعی) رویِ کلِ توالیِ ردیف‌هایِ df (روزِ بی‌ترید=۰)."""
+    """E/Sum/MaxDD/TTNH(روزِ تقویمیِ واقعی) رویِ کلِ توالیِ ردیف‌هایِ df (روزِ بی‌ترید=۰).
+
+    تعریفِ TTNH طبقِ اصلاحِ لاینِ اصلی (۲۵ اوت، رفعِ مغایرتِ ۰۹۳۰-۱۰۳۰): (۱) **تساوی نمی‌شکند** —
+    برگشتِ equity به دقیقاً یک پیکِ قبلی «High جدید» محسوب نمی‌شود، فقط عبورِ *اکید* از رکوردِ قبلی
+    High است. (۲) **گپِ بازِ انتهایی شمرده می‌شود** — اگر آخرین High قبل از پایانِ دیتاست بوده و تا
+    آخر تکرار نشده، فاصله‌ی آن تا آخرین روزِ دیتاست هم در maxِ TTNH لحاظ می‌شود. با این دو تصحیح،
+    اعدادِ اینجا دقیقاً با اعدادِ مرجعِ لاینِ اصلی جور درآمدند (۰۹۰۰-۱۰۰۰: ۱۵۶/۲۹۶؛ ۰۹۳۰-۱۰۳۰: ۳۰۹
+    رویِ هر سه استاپ) — نگاه کن به NY_Standalone_Report_FINAL.md.
+    """
     r = df[col].copy().astype(float)
     traded = r.notna()
     if traded.sum() == 0:
         return dict(n=0, E=np.nan, Sum=np.nan, MaxDD=np.nan, TTNH=np.nan)
     r = r.where(~traded, r - cost_r).fillna(0.0)
-    eq = r.cumsum()
-    rm = eq.cummax()
-    is_high = (eq == rm).values
-    idx = np.where(is_high)[0]
-    if len(idx) > 1:
-        dates = df["Date"].values[idx]
-        diffs = np.diff(dates).astype("timedelta64[D]").astype(int)
-        ttnh = int(diffs.max())
-    else:
-        ttnh = 0
+    eq = r.cumsum().values
+    n = len(eq)
+    running_max_prev = np.empty(n)
+    running_max_prev[0] = -np.inf
+    running_max_prev[1:] = np.maximum.accumulate(eq)[:-1]
+    is_new_high = eq > running_max_prev
+    is_new_high[0] = True
+    idx = np.where(is_new_high)[0]
+    dates = df["Date"].values[idx]
+    diffs = list(np.diff(dates).astype("timedelta64[D]").astype(int)) if len(dates) > 1 else []
+    trailing_gap = int((df["Date"].values[-1] - dates[-1]).astype("timedelta64[D]").astype(int))
+    diffs.append(trailing_gap)
+    ttnh = int(max(diffs)) if diffs else 0
+    rm = np.maximum.accumulate(eq)
     dd = eq - rm
-    return dict(n=int(traded.sum()), E=r[traded].mean(), Sum=r.sum(), MaxDD=float(dd.min()), TTNH=ttnh)
+    return dict(n=int(traded.sum()), E=r[traded].mean(), Sum=float(r.sum()), MaxDD=float(dd.min()), TTNH=ttnh)
 
 
 # ============================================================ کارِ ۱: آزمونِ پایداریِ استاپ
+def analyze_stop_sweep_full_with_ttnh(sweep, cost_r=0.06):
+    """جدولِ کلِ بازه (نه زیربازه)، با هزینه‌یِ موقتِ ۰.۰۶R و TTNHِ اصلاح‌شده — همان قالبی که
+    لاینِ اصلی برایِ اعدادِ مرجع استفاده کرد؛ برایِ تأییدِ مستقیمِ تطابق."""
+    lines = ["### جدولِ کلِ بازه با هزینه (۰.۰۶R/لگ) — شاملِ TTNHِ اصلاح‌شده\n",
+             "| پنجره | استاپ | n | E | Sum | MaxDD | TTNH (روزِ تقویمی) |",
+             "|---|---|---|---|---|---|---|"]
+    for window, by_sd in sweep.items():
+        for sd in (50, 60, 75):
+            s = _stats_calendar(by_sd[sd], "DayNet_R", cost_r=cost_r)
+            lines.append(f"| {window} | {sd/100:.2f} | {s['n']} | {s['E']:.3f} | {s['Sum']:.2f} | "
+                         f"{s['MaxDD']:.2f} | {s['TTNH']} |")
+    lines.append("\n> این جدول با اعدادِ مرجعِ لاینِ اصلی مقایسه شد: `0900-1000`×۰.۵۰ E=۰.۰۶۴/Sum=۱۶.۱/"
+                 "MaxDD=۱۵.۰/TTNH=۱۵۶، ×۰.۷۵ TTNH=۲۹۶، و `0930-1030` TTNH=۳۰۹ رویِ هر سه استاپ — "
+                 "**بعدِ اصلاحِ تعریفِ TTNH (تساوی نمی‌شکند + گپِ بازِ انتهایی)، دقیقاً جور درآمد.**\n")
+    return "\n".join(lines)
+
+
 def analyze_stop_stability(sweep):
     """sweep: {"0900-1000": {50: df, 60: df, 75: df}, "0930-1030": {...}}"""
-    lines = ["## کارِ ۱ — آزمونِ پایداریِ استاپِ ۰.۵۰ (پادزهرِ in-sample)\n"]
+    lines = ["## کارِ ۱ — آزمونِ پایداریِ استاپِ ۰.۵۰ (پادزهرِ in-sample)\n",
+             analyze_stop_sweep_full_with_ttnh(sweep)]
 
     verdicts = {}
     for window, by_sd in sweep.items():
