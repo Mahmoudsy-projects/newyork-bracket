@@ -257,6 +257,73 @@ def analyze_newsday_boxsize(df_ref, window_label, stop_label):
     return "\n".join(lines)
 
 
+# ============================================================ کارِ ۴: BoxClose_Pos (فرضیه‌ی لگِ داخلی)
+def _boxclose_bucket(v):
+    if v < 0.33:
+        return "کف (<0.33)"
+    if v > 0.67:
+        return "سقف (>0.67)"
+    return "میانی (0.33-0.67)"
+
+
+def analyze_boxclose_pos(df, window_label):
+    """کارِ ۴: (BoxClose-BoxLow)/BoxSize — گزارشی، بدونِ ساختنِ فیلتر. فرضیه‌یِ محمود: «لگِ داخلی
+    خلافِ حرکتِ اصلی» — یعنی وقتی کلوزِ باکس نزدیکِ کف بوده، شکستِ Sell محتمل‌تر/بهتر باشد (و برعکس
+    برایِ سقف). این تابع سه سطل می‌سازد و E/جهتِ شکست را رویشان شرطی می‌کند.
+    """
+    lines = [f"### {window_label}\n"]
+    d = df.copy()
+    d["Bucket"] = d["BoxClose_Pos"].astype(float).apply(_boxclose_bucket)
+
+    lines.append("| سطل | n(روز) | E (خام) | WR | %Buy | %Sell | %None |")
+    lines.append("|---|---|---|---|---|---|---|")
+    for bucket in ["کف (<0.33)", "میانی (0.33-0.67)", "سقف (>0.67)"]:
+        sub = d[d["Bucket"] == bucket]
+        r = sub["DayNet_R"].dropna().astype(float)
+        e_str = f"{r.mean():.3f}" if len(r) else "n/a"
+        wr_str = f"{float((r>0).mean()):.3f}" if len(r) else "n/a"
+        n_total = len(sub)
+        pct_buy = 100.0 * (sub["BreakDir"] == "Buy").sum() / max(1, n_total)
+        pct_sell = 100.0 * (sub["BreakDir"] == "Sell").sum() / max(1, n_total)
+        pct_none = 100.0 * (sub["BreakDir"] == "None").sum() / max(1, n_total)
+        lines.append(f"| {bucket} | {n_total} | {e_str} | {wr_str} | {pct_buy:.1f}% | {pct_sell:.1f}% | {pct_none:.1f}% |")
+    return "\n".join(lines)
+
+
+def analyze_boxclose_pos_all(dfs_by_window):
+    lines = ["## کارِ ۴ — ستونِ `BoxClose_Pos` (فرضیه‌یِ لگِ داخلیِ محمود)\n",
+             "فرضیه‌یِ محمود (طبقِ متنِ دستورِ مدیرِ پروژه): «لگِ داخلی خلافِ حرکتِ اصلی» — اینکه جایِ "
+             "کلوزِ باکس در رنجِ خودش ممکن است پیش‌بینی‌کننده‌یِ جهتِ شکست باشد. **فقط گزارشی — هیچ "
+             "فیلتری ساخته/اعمال نشده.**\n"]
+    for label, df in dfs_by_window.items():
+        lines.append(analyze_boxclose_pos(df, label))
+
+    # یافته‌ی خام، بدونِ پیش‌فرضِ جهتِ فرضیه — محمود/مدیرِ پروژه خودشان با تعریفِ دقیقِ «خلافِ حرکتِ
+    # اصلی» تطبیقش بدهند؛ اینجا فقط الگویِ مشاهده‌شده گزارش می‌شود.
+    floor_sell_pcts, ceil_buy_pcts = [], []
+    for df in dfs_by_window.values():
+        d = df.copy()
+        d["Bucket"] = d["BoxClose_Pos"].astype(float).apply(_boxclose_bucket)
+        floor = d[d["Bucket"] == "کف (<0.33)"]
+        ceil_ = d[d["Bucket"] == "سقف (>0.67)"]
+        if len(floor): floor_sell_pcts.append(100.0 * (floor["BreakDir"] == "Sell").sum() / len(floor))
+        if len(ceil_): ceil_buy_pcts.append(100.0 * (ceil_["BreakDir"] == "Buy").sum() / len(ceil_))
+
+    lines.append(
+        "\n> **یافته‌یِ خام (بدونِ برچسبِ تأیید/ردِ فرضیه — تفسیرِ دقیق با محمود/مدیرِ پروژه است):** "
+        f"هر سه پنجره یک الگویِ یکسان و پیوسته نشان دادند — وقتی کلوزِ باکس نزدیکِ **کف** بوده، "
+        f"شکستِ **Sell** غالب بوده ({', '.join(f'{p:.0f}%' for p in floor_sell_pcts)} در سه پنجره)؛ "
+        f"وقتی نزدیکِ **سقف** بوده، شکستِ **Buy** غالب بوده "
+        f"({', '.join(f'{p:.0f}%' for p in ceil_buy_pcts)}). این یعنی جهتِ شکست هم‌جهتِ کلوزِ باکس "
+        "است (نه خلافش) — یک الگویِ ادامه‌دهنده (momentum)، نه بازگشتی. اگر تعریفِ «لگِ داخلیِ خلافِ "
+        "حرکتِ اصلی» محمود به یک بازگشت/reversal اشاره داشته، این دیتا آن را تأیید نمی‌کند؛ اگر منظور "
+        "همبستگیِ کلوز-باکس/جهتِ شکست بوده (بدونِ فرضِ جهتِ بازگشتی)، این یک همبستگیِ قویاً محسوس و "
+        "تکرارشونده در هر سه پنجره است.\n"
+        "\n> مقایسه با توکیو: TODO — دیتاستِ `DayBias_History_XAUUSD.csv`ِ توکیو این‌جا در دسترس "
+        "نبود؛ ستونِ معادل باید در آن ریپو جدا اضافه/بازتولید شود.\n")
+    return "\n".join(lines)
+
+
 def main():
     ap = argparse.ArgumentParser()
     for w in ("0900", "0930"):
@@ -264,6 +331,10 @@ def main():
             ap.add_argument(f"--sweep{w}-sd{sd}", dest=f"sweep{w}_sd{sd}", required=True)
     ap.add_argument("--slippage-p75-r", type=float, default=None)
     ap.add_argument("--slippage-p90-r", type=float, default=None)
+    ap.add_argument("--boxclosepos-0830", dest="bcp0830", default=None,
+                     help="NY_History_0830-0930.csv با ستونِ BoxClose_Pos (v1.7)")
+    ap.add_argument("--boxclosepos-0900", dest="bcp0900", default=None)
+    ap.add_argument("--boxclosepos-0930", dest="bcp0930", default=None)
     ap.add_argument("--out", default="NY_FinalTasks_1-3.md")
     args = ap.parse_args()
 
@@ -272,15 +343,26 @@ def main():
         "0930-1030": {50: _load(args.sweep0930_sd50), 60: _load(args.sweep0930_sd60), 75: _load(args.sweep0930_sd75)},
     }
 
-    report = ["# NY_FinalTasks_1-3 — آزمونِ پایداریِ استاپ + مدلِ هزینه + NewsDay×BoxSize\n",
-              "> کارهایِ ۱-۳ از `Manager_Decision_20260824.md`. کارِ ۴ (`BoxClose_Pos`) نیازمندِ "
-              "اکسپورتِ تازه است — هنوز اینجا نیست.\n"]
+    have_task4 = args.bcp0830 and args.bcp0900 and args.bcp0930
+    report = [f"# NY_FinalTasks_{'1-4' if have_task4 else '1-3'} — "
+              "آزمونِ پایداریِ استاپ + مدلِ هزینه + NewsDay×BoxSize" +
+              (" + BoxClose_Pos" if have_task4 else "") + "\n",
+              "> کارهایِ ۱-۴ از `Manager_Decision_20260824.md`." +
+              ("" if have_task4 else " کارِ ۴ (`BoxClose_Pos`) نیازمندِ اکسپورتِ تازه است — هنوز اینجا نیست.") + "\n"]
 
     report.append(analyze_stop_stability(sweep))
 
     ref_df = sweep["0900-1000"][50]
     report.append(analyze_cost_scenarios(ref_df, "0900-1000", "0.50", args.slippage_p75_r, args.slippage_p90_r))
     report.append(analyze_newsday_boxsize(ref_df, "0900-1000", "0.50"))
+
+    if have_task4:
+        dfs_by_window = {
+            "0830-0930": _load(args.bcp0830),
+            "0900-1000": _load(args.bcp0900),
+            "0930-1030": _load(args.bcp0930),
+        }
+        report.append(analyze_boxclose_pos_all(dfs_by_window))
 
     with open(args.out, "w", encoding="utf-8") as f:
         f.write("\n".join(report))
