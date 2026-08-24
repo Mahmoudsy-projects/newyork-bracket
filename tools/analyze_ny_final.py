@@ -30,7 +30,6 @@ TTNH محاسبه‌شده‌یِ اینجا (به‌روزِ تقویمیِ و�
         --sweep0930-sd50 .../NY_History_0930-1030_sd50.csv \
         --sweep0930-sd60 .../NY_History_0930-1030_sd60.csv \
         --sweep0930-sd75 .../NY_History_0930-1030.csv \
-        --commission-usd-roundtrip <عدد از محمود، اختیاری> \
         --slippage-p75-r <عدد از لاینِ اصلی، اختیاری> \
         --out NY_FinalTasks_1-3.md
 """
@@ -38,8 +37,6 @@ import argparse
 import numpy as np
 import pandas as pd
 
-EXEC_COST_R = 0.06  # همان مقدارِ موقتِ v1.6 — فقط برایِ ردیفِ «مرجع» در جدولِ خلاصه استفاده می‌شود
-SPREAD_USD = {"xchief": 0.17, "errante": 0.23}  # میانگینِ اسپرد، پنجره‌یِ باکس، طبقِ SpreadLog ۵روزه
 SLIPPAGE_R = {"median": 0.029, "mean": 0.072}   # طبقِ توزیعِ executionaudit (لاینِ اصلی)
 
 
@@ -130,13 +127,35 @@ def analyze_stop_stability(sweep):
 
 
 # ============================================================ کارِ ۲: مدلِ هزینه‌ی سه‌جزئی
-def analyze_cost_scenarios(df_ref, window_label, stop_label, commission_usd_roundtrip, slippage_p75_r):
-    """پیکربندیِ مرجع فقط: 0900-1000 / stop 0.50. هزینه به‌ازایِ هر لگ، از رویِ BoxSizeِ همان روز."""
+CONTRACT_SIZE = 100  # اونس/لات XAUUSD — هم xChief هم Errante (طبقِ Specification هر دو، محمود فرستاد)
+
+# طبقِ Specificationِ دو بروکر که محمود فرستاد:
+#  - xChief: اسپرد از SpreadLog ~$0.17 + کمیسیونِ صریح «Instant by deal volume, in/out deals:
+#    2.5 USD per lot» — یعنی هم رویِ دیلِ بازکردن هم رویِ دیلِ بستن، پس رفت‌وبرگشت = 2×2.5 = $5/لات.
+#  - Errante: اسپرد ~$0.23، **هیچ ردیفِ Commission در Specification نبود** — یعنی مدلِ
+#    اسپردِ-همه‌چیز-توش (بروکرِ B-book/بدونِ کمیسیونِ جدا)، سازگار با اسپردِ پهن‌ترش.
+BROKER_SPECS = {
+    "xchief":  dict(spread_usd=0.17, commission_usd_per_lot_roundtrip=5.0),
+    "errante": dict(spread_usd=0.23, commission_usd_per_lot_roundtrip=0.0),
+}
+
+
+def analyze_cost_scenarios(df_ref, window_label, stop_label, slippage_p75_r):
+    """پیکربندیِ مرجع: 0900-1000 / stop 0.50. هزینه به‌ازایِ هر لگ، از رویِ BoxSizeِ همان روز.
+
+    نکته‌ی مهمِ تبدیلِ واحد: اسپرد یک کمیّتِ *قیمتی* است (مثلِ BoxSize)، پس نسبتش به BoxSize
+    مستقیماً به R تبدیل می‌شود — lot/ContractSize لغو می‌شوند. کمیسیون امّا یک کمیّتِ *نقدیِ به‌ازایِ
+    لات* است (نه قیمتی)، پس باید اول بر ContractSize تقسیم شود تا هم‌واحدِ قیمت شود، *سپس* مثلِ
+    اسپرد به BoxSize نسبت داده شود: `commission_R = commission$/lot / (StopDepthPct × BoxSize$ × ContractSize)`.
+    (نسخه‌ی قبلیِ این تابع این تقسیمِ ContractSize را نداشت — کمیسیون را ۱۰۰برابر بیش‌برآورد می‌کرد؛
+    همینجا فیکس شد، قبل از اینکه به گزارشِ نهایی برود.)
+    """
     lines = ["## کارِ ۲ — مدلِ هزینه‌یِ سه‌جزئی رویِ پیکربندیِ مرجع "
              f"({window_label} / stop {stop_label})\n",
-             "فرمول: `cost_R(روز) = (spread$ + commission$ + slippage$) / (StopDepthPct × BoxSize$)`؛ "
-             "برایِ اسلیپیج از مقدارِ Rِ داده‌شده مستقیم استفاده می‌شود (قبلاً به R تبدیل شده، طبقِ "
-             "ممیزیِ ریل).\n"]
+             "فرمول: `cost_R(روز) = spread$/( StopDepthPct×BoxSize$ ) + "
+             "commission$perLot/( StopDepthPct×BoxSize$×ContractSize ) + slippage_R`؛ "
+             f"ContractSize={CONTRACT_SIZE} اونس/لات (Specificationِ هر دو بروکر). اسلیپیج مستقیماً "
+             "به‌صورتِ R از ممیزیِ ریل گرفته شده.\n"]
 
     traded = df_ref[df_ref["DayNet_R"].notna()].copy()
     n = len(traded)
@@ -144,55 +163,56 @@ def analyze_cost_scenarios(df_ref, window_label, stop_label, commission_usd_roun
         lines.append("**داده‌ای برایِ پیکربندیِ مرجع پیدا نشد.**\n")
         return "\n".join(lines)
 
-    broker = "errante"  # پیکربندیِ مرجع رویِ همین دیتاستِ Errante محاسبه شده
-    spread_usd = SPREAD_USD[broker]
     stop_pct = 0.50
-    spread_r_per_row = spread_usd / (stop_pct * traded["BoxSize"].astype(float))
-    commission_r_per_row = (
-        (commission_usd_roundtrip / (stop_pct * traded["BoxSize"].astype(float)))
-        if commission_usd_roundtrip is not None else None
-    )
-
+    box = traded["BoxSize"].astype(float)
     lines.append(f"n لگِ اجراشده (فقط لگِ مستقیم؛ ریورس در جدولِ جدا): {n}\n")
-    lines.append(f"اسپردِ ثابت (Errante، طبقِ SpreadLog ۵روزه): ${spread_usd} → "
-                 f"میانگینِ cost_R اسپرد در این نمونه = {spread_r_per_row.mean():.4f}R\n")
 
-    if commission_usd_roundtrip is None:
-        lines.append("**کمیسیون: TODO — هنوز از محمود نرسیده** (بندِ «اطلاعاتِ موردنیاز» دستورِ "
-                     "مدیرِ پروژه). جدولِ زیر فقط اسپرد+اسلیپیج را نشان می‌دهد؛ کمیسیون بعداً اضافه می‌شود.\n")
-    else:
-        lines.append(f"کمیسیون (ورودیِ محمود): ${commission_usd_roundtrip}/ترید → "
-                     f"میانگینِ cost_R کمیسیون = {commission_r_per_row.mean():.4f}R\n")
+    lines.append("| بروکر | اسپرد | کمیسیون (رفت‌وبرگشت) | cost_R اسپرد (میانگین) | cost_R کمیسیون (میانگین) |")
+    lines.append("|---|---|---|---|---|")
+    per_broker_cost = {}
+    for name, spec in BROKER_SPECS.items():
+        spread_r = spec["spread_usd"] / (stop_pct * box)
+        commission_r = spec["commission_usd_per_lot_roundtrip"] / (stop_pct * box * CONTRACT_SIZE)
+        per_broker_cost[name] = spread_r + commission_r
+        lines.append(f"| {name} | ${spec['spread_usd']} | ${spec['commission_usd_per_lot_roundtrip']} | "
+                     f"{spread_r.mean():.4f}R | {commission_r.mean():.4f}R |")
+
+    lines.append(
+        "\n**بروکرِ مرجعِ این جدول: xChief** — طبقِ فرضِ مدیرِ پروژه (بروکرِ مقصدِ فوروارد NY، کنارِ "
+        "توکیو) و تأییدِ محمود (Specificationِ xChief فرستاده شد). Errante فقط برایِ دیتایِ بک‌تست "
+        "استفاده شده، نه اجرایِ زنده — سطرش فقط برایِ مقایسه‌ست.\n"
+        "⚠️ فرضِ «رفت‌وبرگشت = ۲×۲.۵$» بر اساسِ عبارتِ «in/out deals» در Specificationِ xChief است "
+        "(یعنی هر دو دیلِ باز/بسته جدا ۲.۵$ می‌گیرند)؛ اگر منظورِ بروکر همان ۲.۵$ برایِ کلِ رفت‌وبرگشت "
+        "بوده، همه‌ی cost_Rهایِ کمیسیون در این جدول را نصف کن — محمود لطفاً این را با یک تریدِ تستی "
+        "یا پشتیبانیِ بروکر تأیید کن.\n")
+
+    xchief_cost_r_per_row = per_broker_cost["xchief"]
 
     scenarios = [("میانه‌یِ اسلیپیج (۰.۰۲۹R)", SLIPPAGE_R["median"]),
                  ("میانگینِ اسلیپیج (۰.۰۷۲R)", SLIPPAGE_R["mean"])]
     if slippage_p75_r is not None:
         scenarios.append((f"P75ِ اسلیپیج ({slippage_p75_r}R)", slippage_p75_r))
     else:
-        lines.append("**سناریویِ P75ِ اسلیپیج: TODO — عددش هنوز از لاینِ اصلی نرسیده** "
-                     "(فقط میانه/میانگین دادند، نه P75؛ اختراع نکردم).\n")
+        lines.append("**سناریویِ P75ِ اسلیپیج: هنوز TODO** — لاینِ اصلی فقط میانه/میانگین داد، نه P75؛ "
+                     "اختراع نکردم.\n")
 
-    lines.append("\n| سناریو | cost_R میانگین (اسپرد+اسلیپیج"
-                 + ("+کمیسیون" if commission_usd_roundtrip is not None else "") + ") | E پس از هزینه | Sum پس از هزینه |")
+    lines.append("\n| سناریو (xChief، اسپرد+کمیسیون+اسلیپیج) | cost_R میانگین | E پس از هزینه | Sum پس از هزینه |")
     lines.append("|---|---|---|---|")
     raw_e = traded["DayNet_R"].astype(float).mean()
     raw_sum = traded["DayNet_R"].astype(float).sum()
     for name, slip_r in scenarios:
-        total_cost_per_row = spread_r_per_row + slip_r
-        if commission_r_per_row is not None:
-            total_cost_per_row = total_cost_per_row + commission_r_per_row
+        total_cost_per_row = xchief_cost_r_per_row + slip_r
         adj = traded["DayNet_R"].astype(float) - total_cost_per_row
         lines.append(f"| {name} | {total_cost_per_row.mean():.4f}R | {adj.mean():.4f} | {adj.sum():.2f} |")
 
     lines.append(f"\nخام (بدونِ هیچ هزینه‌ای، برایِ مرجع): E={raw_e:.4f}  Sum={raw_sum:.2f}\n")
 
+    mean_scenario_cost = xchief_cost_r_per_row.mean() + SLIPPAGE_R["mean"]
     lines.append(
-        "\n**آستانه‌ی مرگ (هزینه‌ای که E را صفر می‌کند):** "
-        f"cost_R بحرانی ≈ {raw_e:.4f}R به‌ازایِ هر لگ (میانگینِ فعلی). با اسپردِ Errante به‌تنهایی "
-        f"(~{spread_r_per_row.mean():.3f}R) هنوز فاصله هست؛ با افزودنِ میانگینِ اسلیپیج "
-        f"({SLIPPAGE_R['mean']}R) مجموع ≈ {spread_r_per_row.mean()+SLIPPAGE_R['mean']:.3f}R — "
-        f"{'زیرِ آستانه (E هنوز مثبت)' if spread_r_per_row.mean()+SLIPPAGE_R['mean'] < raw_e else 'بالایِ آستانه (E منفی می‌شود)'}؛ "
-        "کمیسیون هنوز اضافه نشده — با آمدنش این حکم باید بازبینی شود.\n")
+        "\n**آستانه‌ی مرگ (هزینه‌ای که E را صفر می‌کند):** cost_R بحرانی ≈ "
+        f"{raw_e:.4f}R به‌ازایِ هر لگ. سناریویِ میانگین (xChief) ≈ {mean_scenario_cost:.4f}R — "
+        f"{'زیرِ آستانه (E هنوز مثبت)' if mean_scenario_cost < raw_e else 'بالایِ آستانه (E منفی می‌شود)'}. "
+        "P75ِ اسلیپیج که برسد، این حکم باید دوباره چک شود.\n")
     return "\n".join(lines)
 
 
@@ -233,7 +253,6 @@ def main():
     for w in ("0900", "0930"):
         for sd in ("50", "60", "75"):
             ap.add_argument(f"--sweep{w}-sd{sd}", dest=f"sweep{w}_sd{sd}", required=True)
-    ap.add_argument("--commission-usd-roundtrip", type=float, default=None)
     ap.add_argument("--slippage-p75-r", type=float, default=None)
     ap.add_argument("--out", default="NY_FinalTasks_1-3.md")
     args = ap.parse_args()
@@ -250,8 +269,7 @@ def main():
     report.append(analyze_stop_stability(sweep))
 
     ref_df = sweep["0900-1000"][50]
-    report.append(analyze_cost_scenarios(ref_df, "0900-1000", "0.50",
-                                          args.commission_usd_roundtrip, args.slippage_p75_r))
+    report.append(analyze_cost_scenarios(ref_df, "0900-1000", "0.50", args.slippage_p75_r))
     report.append(analyze_newsday_boxsize(ref_df, "0900-1000", "0.50"))
 
     with open(args.out, "w", encoding="utf-8") as f:
